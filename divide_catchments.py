@@ -69,7 +69,7 @@ def sort_target_points(target_points):
     return adjusted_target_points, longest_task_basin_id
 
 
-def simulate_task_execution(n_processors, target_points, is_plot=False):
+def simulate_task_execution(n_processors, target_points, is_plot=False,fig_name=None):
     # Initialize task statuses (0: pending, 1: waiting, 2: running, 3: completed)
     statuses = [0] * len(target_points)
     dependencies = [set(point[5]) for point in target_points]
@@ -133,9 +133,10 @@ def simulate_task_execution(n_processors, target_points, is_plot=False):
                 plt.text(start_time + (end_time - start_time) / 2, i, f"{basin_id+1}", va='center', ha='center', color='white')
 
         plt.yticks(range(n_processors), [f"Processor {i+1}" for i in range(n_processors)])
-        plt.xlabel("Time")
-        plt.title(f"Task Execution Timeline (Makespan: {makespan})")
+        plt.xlabel(f"Time")
+        plt.title(f"Task Execution Timeline (Makespan: {makespan}) ({fig_name.split('.')[0]})")
         plt.tight_layout()
+        plt.savefig(fig_name, dpi=300) if fig_name is not None else None
         plt.show()
     print(f"Basin numbers: {len(target_points)}")
     print(f"Makespan: {makespan}")
@@ -219,6 +220,16 @@ def plot_utilization(opt_info):
     plt.show()
  
 
+
+def plot_basin(basin,acc=None, cmap='Blues'):
+    plt.figure(figsize=(6, 6))
+    plt.imshow(basin, cmap='tab20')  
+    if acc is not None: 
+        plt.imshow(np.ma.masked_where(acc == 0, acc), cmap='binary', alpha=0.6, interpolation='nearest')
+    plt.colorbar(label="Region Index")
+    plt.title(f"Basins")
+    plt.show()
+
 def find_upstream(acc, fdir, min_area=500):
     
     d8_offsets = {
@@ -264,7 +275,7 @@ def find_upstream(acc, fdir, min_area=500):
             return []
     return best_upstream_points
   
-def divide_catchments(asc_file, col, row, num_processors,method='layer',max_subbasins=100,crs="EPSG:26910", is_plot=False):
+def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method='layer', crs="EPSG:26910", is_plot=False):
     # Initialize the Grid object and add DEM data
     grid = Grid.from_ascii(asc_file, crs=Proj(crs))
     dem = grid.read_ascii(asc_file, crs=Proj(crs))
@@ -354,9 +365,9 @@ def divide_catchments(asc_file, col, row, num_processors,method='layer',max_subb
                 
             opt_info.append([basin_id, makespan, average_utilization])
             # Update binary search range based on the result
-            if basin_id < max_subbasins:
+            if basin_id < num_subbasins:
                 last_area_max = last_area   
-            elif basin_id == max_subbasins:
+            elif basin_id == num_subbasins:
                 break
             else:
                 last_area_min = last_area  
@@ -372,7 +383,7 @@ def divide_catchments(asc_file, col, row, num_processors,method='layer',max_subb
         makespan=0
         bottleneck_basin_id=0
         opt_info=[]
-        while basin_id <max_subbasins: 
+        while basin_id <=num_subbasins: 
             mask = subbasins == bottleneck_basin_id +1                    
             points=find_upstream(acc*mask, fdir*mask, min_area=np.sum(mask)) 
             if len(points)==0:
@@ -384,7 +395,9 @@ def divide_catchments(asc_file, col, row, num_processors,method='layer',max_subb
                 combined_mask = mask & sub_catchment_mask           
                 subbasins[combined_mask == 1] = basin_id
                 all_points.append([basin_id-1, target_point[1], target_point[0], target_point[0] * colmax + target_point[1]])
-                basin_id+=1  
+                basin_id+=1
+                if basin_id ==num_subbasins+1:
+                    break                 
             target_points = [point + [int(np.sum(subbasins == point[0]+1))] for point in all_points]
             fdir = grid.flowdir(inflated_dem)
             target_points=build_dependencies(target_points, grid, fdir)
@@ -394,9 +407,9 @@ def divide_catchments(asc_file, col, row, num_processors,method='layer',max_subb
         plot_utilization(opt_info)
 
     if method == 'equal':
-        target_size = catchment_cells // num_processors
+        target_size = catchment_cells // num_subbasins
         remaining_cells = np.sum(catchment_mask) 
-        while basin_id <= num_processors and remaining_cells > 0:
+        while basin_id <= num_subbasins and remaining_cells > 0:
             # Find the point with accumulation closest to the target size within the remaining catchment
             acc_masked = acc * catchment_mask
             target_point = np.unravel_index(np.argmin(np.abs(acc_masked - target_size)), acc_masked.shape)
@@ -417,11 +430,11 @@ def divide_catchments(asc_file, col, row, num_processors,method='layer',max_subb
            
             # Update remaining cells  
             remaining_cells = np.sum(catchment_mask)        
-            if basin_id == num_processors and remaining_cells>0: 
+            if basin_id == num_subbasins and remaining_cells>0: 
                 target_points.pop()  
                 basin_id -=1    
                              
-            target_size= remaining_cells // (num_processors - basin_id)      
+            target_size= remaining_cells // (num_subbasins - basin_id) if  num_subbasins>basin_id else 0 
             # Add the target point to the list      
             target_points.append([basin_id-1, target_point[1], target_point[0], target_point[0] * colmax + target_point[1], int(np.sum(sub_catchment_mask))])
             print(f"Target point: {target_point}, Subbasin cells: {np.sum(sub_catchment_mask)}, Remaining cells: {remaining_cells}")
@@ -433,7 +446,7 @@ def divide_catchments(asc_file, col, row, num_processors,method='layer',max_subb
         # Visualize the subbasins
         plt.figure(figsize=(10, 8))
         num_colors=subbasins.max()
-        plt.title(f"Divided into {num_colors} Subbasins", fontsize=16)
+        plt.title(f"Divided into {num_colors} Subbasins ({method})", fontsize=16)
         
         
         tab20 = plt.colormaps['tab20']
@@ -445,14 +458,14 @@ def divide_catchments(asc_file, col, row, num_processors,method='layer',max_subb
         for point in target_points:
             id, c, r, index, cells,_ = point           
             plt.plot(c, r, 'bo')  
-            plt.text(c, r, f'{index}', color='black', fontsize=8, ha='left', va='top')
+            #plt.text(c, r, f'{index}', color='black', fontsize=8, ha='left', va='top')
         
         # Mark the main outlet point
         plt.plot(col, row, 'ro', label='Main Outlet')
         
         plt.legend()
         plt.colorbar(label='Subbasin ID',boundaries=np.arange(0.5, num_colors + 1.5), ticks=np.arange(2, num_colors + 1, 2))
-        plt.savefig('subbasins.png', dpi=300)
+        plt.savefig(f'subbasins_{method}.png', dpi=300)
         plt.show()
     
     # Print all target points with indices
@@ -465,7 +478,7 @@ def divide_catchments(asc_file, col, row, num_processors,method='layer',max_subb
     print("All indices: ")    
     print(" ".join(map(str, indexes)))
     
-    simulate_task_execution(num_processors, target_points,is_plot=True)
+    simulate_task_execution(num_processors, target_points,is_plot=True,fig_name=f'Gantt_Chart_{method}.png')
     return target_points
 
 if __name__=='__main__':
@@ -477,5 +490,6 @@ if __name__=='__main__':
     # col, row = 7,45  # Main outlet coordinates
     # asc_file_path='WA_Snohomish/DataInputs/m_1_DEM/SSM_Everett_WA_90m_expFLAT.asc'
     # col, row = 95,319  # Main outlet coordinates
-    num_processors =16 # Divide into 16 subbasins
-    divide_catchments(asc_file_path, col, row, num_processors,method='layer',max_subbasins=100,crs=crs, is_plot=True)
+    num_processors =8 # Number of processors
+    num_subbasins=100 # Divide into 100 subbasins
+    divide_catchments(asc_file_path, col, row, num_processors, num_subbasins, method='layer', crs=crs, is_plot=True)

@@ -24,16 +24,17 @@ Below is an example of how to use the functions in this repository:
 # Example usage
 asc_file_path = 'path/to/your/dem.asc'
 col, row = 465, 656  # Main outlet coordinates
-num_processors = 16
+num_processors =8 # Number of processors
+num_subbasins=100 # Divide into 100 subbasins
 
 # Divide the watershed into subbasins
 target_points = divide_catchments(
     asc_file=asc_file_path,
     col=col,
     row=row,
-    num_processors=num_processors,
+    num_processors, 
+    num_subbasins,
     method='layer',
-    max_subbasins=100,
     crs="EPSG:26910",
     is_plot=True
 )
@@ -41,16 +42,16 @@ target_points = divide_catchments(
 
 ## Functions
 
-### `sort_target_points(target_points)`
+### `sort_target_points`
 Sorts target points based on branch time and finds the longest branch and the task with the maximum duration.
 
-### `simulate_task_execution(n_processors, target_points, is_plot=False)`
+### `simulate_task_execution`
 Simulates task execution across multiple processors and optionally generates a Gantt chart.
 
-### `divide_catchments(asc_file, col, row, num_processors, method='layer', max_subbasins=100, crs="EPSG:26910", is_plot=False)`
+### `divide_catchments`
 Divides a watershed into subbasins based on flow direction and accumulation.
 
-### `plot_utilization(opt_info)`
+### `plot_utilization`
 Plots a graph showing the relationship between basin numbers, makespan, and average utilization. Useful for visualizing performance under different configurations.
 
 ## Methods
@@ -75,7 +76,5 @@ Each method has its strengths:
 - **Subbasin Map**: Displays the divided subbasins with unique colors.
 - **Gantt Chart**: Visualizes task execution schedules across processors.
 - **Utilization Plot**: Shows the relationship between basin numbers, makespan, and processor utilization for performance analysis.
+![Comparison of three methods](img/three_methods.png)
 
-## License
-
-This project is licensed under the MIT License. See the LICENSE file for details.

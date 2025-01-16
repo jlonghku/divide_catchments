@@ -340,7 +340,7 @@ def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method=
                         # Handle the final remaining cells as part of the current subbasin
                         subbasins[tmp_catchment_mask] = basin_id
                         target_points.append(
-                            [basin_id - 1, target_point[1], target_point[0], target_point[0] * subbasins.shape[1] + target_point[1], remaining_cells,list(range(basin_id-1))]
+                            [basin_id - 1, col, row, row * colmax + col, remaining_cells,list(range(basin_id-1))]
                         )
                         break
 
@@ -492,4 +492,4 @@ if __name__=='__main__':
     # col, row = 95,319  # Main outlet coordinates
     num_processors =8 # Number of processors
     num_subbasins=100 # Divide into 100 subbasins
-    divide_catchments(asc_file_path, col, row, num_processors, num_subbasins, method='layer', crs=crs, is_plot=True)
+    divide_catchments(asc_file_path, col, row, num_processors, num_subbasins, method='branch', crs=crs, is_plot=True)

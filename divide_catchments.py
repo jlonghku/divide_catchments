@@ -3,6 +3,7 @@ from pysheds.grid import Grid
 import matplotlib.pyplot as plt
 from pyproj import Proj
 from matplotlib.colors import ListedColormap
+from collections import deque
 
 def sort_target_points(target_points):
     # Extract dependencies
@@ -230,7 +231,66 @@ def plot_basin(basin,acc=None, cmap='Blues'):
     plt.title(f"Basins")
     plt.show()
 
-def find_upstream(acc, fdir, min_area=500):
+def build_branch(fdir, threshold=None, plot=False):
+    branch = np.zeros_like(fdir, dtype=int)
+    # 定义 D8 流向偏移表
+    offsets = {
+        1: (0, 1),      
+        2: (1, 1),      
+        4: (1, 0),      
+        8: (1, -1),     
+        16: (0, -1),    
+        32: (-1, -1),  
+        64: (-1, 0),   
+        128: (-1, 1)    
+    }
+
+    # 计算每个像元的入度（上游流入数量）
+    in_degree = np.zeros_like(fdir, dtype=int)
+    downstream_map = {}
+
+    for r,c in np.argwhere(fdir > 0):
+        dr, dc = offsets[fdir[r, c]]
+        nr, nc = r + dr, c + dc
+        if fdir[nr, nc] != 0:
+            in_degree[nr, nc] += 1
+            downstream_map.setdefault((r, c), []).append((nr, nc))
+
+    # 初始化队列：入度为 0 的像元作为起点（仅在流域内）
+    queue = deque(np.argwhere((fdir > 0) & (in_degree == 0)))
+    for r, c in queue:
+        branch[r, c] = 1  # 起点直接初始化为 1
+
+    # 按拓扑顺序更新 branch
+    while queue:
+        r, c = queue.popleft()
+        if (r, c) in downstream_map:
+            for nr, nc in downstream_map[(r, c)]:
+                # 更新 branch 值
+                branch[nr, nc] = max(branch[nr, nc], branch[r, c]) if branch[nr, nc]!=branch[r, c] else branch[r, c]+1
+                in_degree[nr, nc] -= 1
+                if in_degree[nr, nc] == 0:  # 下游像元入度为 0 时加入队列
+                    queue.append((nr, nc))
+
+    # 绘制结果图（如果需要）
+    if plot:
+        plot_branch(branch, threshold)
+
+    return branch
+
+def plot_branch(branch, threshold=None):
+    
+    if threshold is not None:
+        branch = np.where(branch > threshold, branch, 0)
+
+    plt.figure(figsize=(8, 6))
+    plt.imshow(branch, cmap='viridis', interpolation='nearest')
+    plt.colorbar(label='Branch Order')
+    plt.title(f"Branch Order Map (Threshold: {threshold})")
+    plt.axis('off')
+    plt.show()
+
+def find_upstream(acc, fdir):
     
     d8_offsets = {
         1: (0, 1),      
@@ -242,10 +302,11 @@ def find_upstream(acc, fdir, min_area=500):
         64: (-1, 0),   
         128: (-1, 1)    
     }
-    step=int(min_area*0.01)
+    threshold=acc.max()
+    step=max(int(threshold*0.01), 1)
     
     while True:   
-        candidates = np.argwhere(acc >= min_area)
+        candidates = np.argwhere(acc >= threshold)
         candidates_set = set(map(tuple, candidates)) 
 
         best_upstream_points = []
@@ -268,10 +329,10 @@ def find_upstream(acc, fdir, min_area=500):
                     best_criterion_value = current_upstreams[1][0]
                     best_upstream_points = [item[1] for item in current_upstreams]
                    
-        min_area -= step
+        threshold -= step
         if best_upstream_points:
             break
-        if min_area <= 0:
+        if threshold <= 0:
             return []
     return best_upstream_points
   
@@ -374,7 +435,39 @@ def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method=
 
         # Visualize the utilization of different configurations
         plot_utilization(opt_info)
-           
+        
+    if method == 'branch1':
+        acc=build_branch(fdir*catchment_mask)
+        all_points=[]
+        all_points.append([basin_id-1,col,row,row * colmax + col])
+        subbasins[catchment_mask == 1] = basin_id
+        basin_id+=1
+        makespan=0
+        bottleneck_basin_id=0
+        opt_info=[]
+        while basin_id <=num_subbasins: 
+            mask = subbasins == bottleneck_basin_id +1                    
+            points=find_upstream(acc*mask, fdir*mask) 
+            if len(points)==0:
+                break
+            tmp_fdir=fdir.copy()
+            for target_point in points:
+                sub_catchment = grid.catchment(x=target_point[1], y=target_point[0], fdir=tmp_fdir, xytype='index')
+                sub_catchment_mask = grid.view(sub_catchment)
+                combined_mask = mask & sub_catchment_mask           
+                subbasins[combined_mask == 1] = basin_id
+                all_points.append([basin_id-1, target_point[1], target_point[0], target_point[0] * colmax + target_point[1]])
+                basin_id+=1
+                if basin_id ==num_subbasins+1:
+                    break                 
+            target_points = [point + [int(np.sum(subbasins == point[0]+1))] for point in all_points]
+            fdir = grid.flowdir(inflated_dem)
+            target_points=build_dependencies(target_points, grid, fdir)
+            target_points,bottleneck_basin_id=sort_target_points(target_points)
+            makespan, average_utilization=simulate_task_execution(num_processors, target_points)
+            opt_info.append([basin_id,makespan,average_utilization]) 
+        plot_utilization(opt_info)
+
     if method == 'branch':
         all_points=[]
         all_points.append([basin_id-1,col,row,row * colmax + col])
@@ -385,7 +478,7 @@ def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method=
         opt_info=[]
         while basin_id <=num_subbasins: 
             mask = subbasins == bottleneck_basin_id +1                    
-            points=find_upstream(acc*mask, fdir*mask, min_area=np.sum(mask)) 
+            points=find_upstream(acc*mask, fdir*mask) 
             if len(points)==0:
                 break
             tmp_fdir=fdir.copy()
@@ -490,6 +583,6 @@ if __name__=='__main__':
     # col, row = 7,45  # Main outlet coordinates
     # asc_file_path='WA_Snohomish/DataInputs/m_1_DEM/SSM_Everett_WA_90m_expFLAT.asc'
     # col, row = 95,319  # Main outlet coordinates
-    num_processors =8 # Number of processors
+    num_processors =16 # Number of processors
     num_subbasins=100 # Divide into 100 subbasins
-    divide_catchments(asc_file_path, col, row, num_processors, num_subbasins, method='branch', crs=crs, is_plot=True)
+    divide_catchments(asc_file_path, col, row, num_processors, num_subbasins, method='branch1', crs=crs, is_plot=True)

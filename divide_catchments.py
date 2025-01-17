@@ -583,6 +583,6 @@ if __name__=='__main__':
     # col, row = 7,45  # Main outlet coordinates
     # asc_file_path='WA_Snohomish/DataInputs/m_1_DEM/SSM_Everett_WA_90m_expFLAT.asc'
     # col, row = 95,319  # Main outlet coordinates
-    num_processors =16 # Number of processors
+    num_processors =8 # Number of processors
     num_subbasins=100 # Divide into 100 subbasins
-    divide_catchments(asc_file_path, col, row, num_processors, num_subbasins, method='branch1', crs=crs, is_plot=True)
+    divide_catchments(asc_file_path, col, row, num_processors, num_subbasins, method='layer', crs=crs, is_plot=True)

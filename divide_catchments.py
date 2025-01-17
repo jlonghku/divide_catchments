@@ -189,7 +189,6 @@ def build_dependencies(target_points, grid, fdir):
 
     return dependency_list
 
-
 def plot_utilization(opt_info):
     # Sort opt_info by the first column (Basin number)
     opt_info = sorted(opt_info)
@@ -219,8 +218,6 @@ def plot_utilization(opt_info):
     fig.tight_layout()
     plt.grid(True)
     plt.show()
- 
-
 
 def plot_basin(basin,acc=None, cmap='Blues'):
     plt.figure(figsize=(6, 6))
@@ -230,53 +227,6 @@ def plot_basin(basin,acc=None, cmap='Blues'):
     plt.colorbar(label="Region Index")
     plt.title(f"Basins")
     plt.show()
-
-def build_branch(fdir, threshold=None, plot=False):
-    branch = np.zeros_like(fdir, dtype=int)
-    # 定义 D8 流向偏移表
-    offsets = {
-        1: (0, 1),      
-        2: (1, 1),      
-        4: (1, 0),      
-        8: (1, -1),     
-        16: (0, -1),    
-        32: (-1, -1),  
-        64: (-1, 0),   
-        128: (-1, 1)    
-    }
-
-    # 计算每个像元的入度（上游流入数量）
-    in_degree = np.zeros_like(fdir, dtype=int)
-    downstream_map = {}
-
-    for r,c in np.argwhere(fdir > 0):
-        dr, dc = offsets[fdir[r, c]]
-        nr, nc = r + dr, c + dc
-        if fdir[nr, nc] != 0:
-            in_degree[nr, nc] += 1
-            downstream_map.setdefault((r, c), []).append((nr, nc))
-
-    # 初始化队列：入度为 0 的像元作为起点（仅在流域内）
-    queue = deque(np.argwhere((fdir > 0) & (in_degree == 0)))
-    for r, c in queue:
-        branch[r, c] = 1  # 起点直接初始化为 1
-
-    # 按拓扑顺序更新 branch
-    while queue:
-        r, c = queue.popleft()
-        if (r, c) in downstream_map:
-            for nr, nc in downstream_map[(r, c)]:
-                # 更新 branch 值
-                branch[nr, nc] = max(branch[nr, nc], branch[r, c]) if branch[nr, nc]!=branch[r, c] else branch[r, c]+1
-                in_degree[nr, nc] -= 1
-                if in_degree[nr, nc] == 0:  # 下游像元入度为 0 时加入队列
-                    queue.append((nr, nc))
-
-    # 绘制结果图（如果需要）
-    if plot:
-        plot_branch(branch, threshold)
-
-    return branch
 
 def plot_branch(branch, threshold=None):
     
@@ -289,6 +239,50 @@ def plot_branch(branch, threshold=None):
     plt.title(f"Branch Order Map (Threshold: {threshold})")
     plt.axis('off')
     plt.show()
+    
+def build_branch(fdir, threshold=None, plot=False):
+    # Initialize branch map
+    branch = np.zeros_like(fdir, dtype=int)
+
+    # Define D8 flow direction offsets
+    offsets = {
+        1: (0, 1), 2: (1, 1), 4: (1, 0), 8: (1, -1),
+        16: (0, -1), 32: (-1, -1), 64: (-1, 0), 128: (-1, 1)
+    }
+
+    # Calculate in-degrees and build downstream map
+    in_degree = np.zeros_like(fdir, dtype=int)
+    downstream_map = {}
+    for r, c in np.argwhere(fdir > 0):
+        dr, dc = offsets[fdir[r, c]]
+        nr, nc = r + dr, c + dc
+        if fdir[nr, nc] != 0:
+            in_degree[nr, nc] += 1
+            downstream_map.setdefault((r, c), []).append((nr, nc))
+
+    # Initialize queue with cells having in-degree 0
+    queue = deque(np.argwhere((fdir > 0) & (in_degree == 0)))
+    for r, c in queue:
+        branch[r, c] = 1  # Start branch order at 1
+
+    # Topological sorting to calculate branch order
+    while queue:
+        r, c = queue.popleft()
+        if (r, c) in downstream_map:
+            for nr, nc in downstream_map[(r, c)]:
+                # Update branch order
+                branch[nr, nc] = (
+                    branch[r, c] + 1 if branch[nr, nc] == branch[r, c] else max(branch[nr, nc], branch[r, c])
+                )
+                in_degree[nr, nc] -= 1
+                if in_degree[nr, nc] == 0:  # Add downstream cell to queue
+                    queue.append((nr, nc))
+
+    # Plot the result if requested
+    if plot:
+        plot_branch(branch, threshold)
+
+    return branch
 
 def find_upstream(acc, fdir):
     

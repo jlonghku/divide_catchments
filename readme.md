@@ -42,17 +42,11 @@ target_points = divide_catchments(
 
 ## Functions
 
-### `sort_target_points`
-Sorts target points based on branch time and finds the longest branch and the task with the maximum duration.
-
-### `simulate_task_execution`
-Simulates task execution across multiple processors and optionally generates a Gantt chart.
-
 ### `divide_catchments`
 Divides a watershed into subbasins based on flow direction and accumulation.
 
-### `plot_utilization`
-Plots a graph showing the relationship between basin numbers, makespan, and average utilization. Useful for visualizing performance under different configurations.
+### `simulate_task_execution`
+Simulates task execution across multiple processors and optionally generates a Gantt chart.
 
 ## Methods
 

@@ -284,7 +284,7 @@ def build_branch(fdir, threshold=None, plot=False):
 
     return branch
 
-def find_upstream(acc, fdir):
+def find_upstream(acc, fdir,threshold=None):
     
     d8_offsets = {
         1: (0, 1),      
@@ -296,38 +296,59 @@ def find_upstream(acc, fdir):
         64: (-1, 0),   
         128: (-1, 1)    
     }
-    threshold=acc.max()
-    step=max(int(threshold*0.01), 1)
-    
-    while True:   
-        candidates = np.argwhere(acc >= threshold)
+    if threshold is None:
+        threshold=acc.max()
+        step=max(int(threshold*0.01), 1)
+        
+        while True:   
+            candidates = np.argwhere(acc >= threshold)
+            candidates_set = set(map(tuple, candidates)) 
+
+            best_upstream_points = []
+            best_criterion_value = 0   
+
+            
+            for r, c in candidates:
+                current_upstreams = []
+                
+                for direction, (dr, dc) in d8_offsets.items():
+                    nr, nc = r - dr, c - dc   
+                    if (nr, nc) in candidates_set and fdir[nr, nc] == direction:
+                        current_upstreams.append((acc[nr, nc], [nr, nc]))
+
+                
+                if len(current_upstreams) > 1:
+                    current_upstreams.sort(reverse=True)
+                    
+                    if current_upstreams[1][0] > best_criterion_value:
+                        best_criterion_value = current_upstreams[1][0]
+                        best_upstream_points = [item[1] for item in current_upstreams]
+                    
+            threshold -= step
+            if best_upstream_points:
+                break
+            if threshold <= 0:
+                return []
+    else:
+        candidates = np.argwhere(acc > threshold)
         candidates_set = set(map(tuple, candidates)) 
-
-        best_upstream_points = []
-        best_criterion_value = 0   
-
-         
-        for r, c in candidates:
-            current_upstreams = []
-             
+        
+        upstream_points = []
+        
+        for r, c in candidates: 
+            current_upstreams = []        
             for direction, (dr, dc) in d8_offsets.items():
                 nr, nc = r - dr, c - dc   
                 if (nr, nc) in candidates_set and fdir[nr, nc] == direction:
                     current_upstreams.append((acc[nr, nc], [nr, nc]))
-
-            
+                    
+                    
             if len(current_upstreams) > 1:
-                current_upstreams.sort(reverse=True)
-                
-                if current_upstreams[1][0] > best_criterion_value:
-                    best_criterion_value = current_upstreams[1][0]
-                    best_upstream_points = [item[1] for item in current_upstreams]
-                   
-        threshold -= step
-        if best_upstream_points:
-            break
-        if threshold <= 0:
-            return []
+                upstream_points.extend(current_upstreams)
+        upstream_points.sort()
+        best_upstream_points = [item[1] for item in upstream_points]
+        
+        
     return best_upstream_points
   
 def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method='layer', crs="EPSG:26910", is_plot=False):
@@ -364,59 +385,60 @@ def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method=
             last_area = (last_area_max + last_area_min) // 2  # Midpoint for binary search
             average_utilization = 0                  
             basin_id = 1
-            last_makespan = np.sum(catchment_mask)
             target_size = (np.sum(catchment_mask)-last_area) // num_processors
-            target_step = int(0.01 * target_size) # Step size for reducing target size
 
-            while target_size > 0:
-                tmp_catchment_mask = catchment_mask.copy()  # Copy of the current catchment mask
-                basin_id = 1
-                subbasins = np.zeros_like(acc, dtype=int)  # Array to store subbasin IDs
-                target_points = []  # List to store target points
-                remaining_cells = int(np.sum(tmp_catchment_mask))  # Remaining unprocessed cells
+            tmp_catchment_mask = catchment_mask.copy()  # Copy of the current catchment mask
+            basin_id = 1
+            subbasins = np.zeros_like(acc, dtype=int)  # Array to store subbasin IDs
+            target_points = []  # List to store target points
+            remaining_cells = int(np.sum(tmp_catchment_mask))  # Remaining unprocessed cells
 
-                while remaining_cells > 0:
-                    # Find the point with accumulation closest to the target size within the remaining catchment
-                    acc_masked = acc * tmp_catchment_mask
-                    target_point = np.unravel_index(
-                        np.argmax(np.where(acc_masked < target_size, acc_masked, -np.inf)), acc_masked.shape
-                    )
-                    
-                    # Extract the catchment (all upstream cells of the selected point)
-                    sub_catchment = grid.catchment(x=target_point[1], y=target_point[0], fdir=fdir, xytype="index")
-                    sub_catchment_mask = grid.view(sub_catchment)
-                    
-                    # Mark the sub-catchment as a new subbasin
-                    subbasins[sub_catchment_mask == 1] = basin_id
-                    tmp_catchment_mask[sub_catchment_mask == 1] = 0  # Update mask
-                    remaining_cells = int(np.sum(tmp_catchment_mask))  # Update remaining cells
-
-                    if remaining_cells < last_area:
-                        # Handle the final remaining cells as part of the current subbasin
-                        subbasins[tmp_catchment_mask] = basin_id
-                        target_points.append(
-                            [basin_id - 1, col, row, row * colmax + col, remaining_cells,list(range(basin_id-1))]
-                        )
-                        break
-
-                    # Add the target point to the list
-                    current_cells = int(np.sum(sub_catchment_mask))  # Number of cells in the subbasin
-                    target_points.append(
-                        [basin_id - 1, target_point[1], target_point[0], target_point[0] * subbasins.shape[1] + target_point[1], current_cells,[]]
-                    )
-
-                    basin_id += 1
-
-                # Recalculate flow direction for the remaining catchment
-                fdir = grid.flowdir(inflated_dem)
-                # Simulate task execution to evaluate makespan and average utilization
+            while remaining_cells > 0:
+                # Find the point with accumulation closest to the target size within the remaining catchment
+                acc_masked = acc * tmp_catchment_mask
+                target_point = np.unravel_index(
+                    np.argmax(np.where(acc_masked < target_size, acc_masked, -np.inf)), acc_masked.shape
+                )
                 
-                makespan, average_utilization = simulate_task_execution(num_processors, target_points)
-                target_size -= target_step  # Reduce target size
+                # Extract the catchment (all upstream cells of the selected point)
+                sub_catchment = grid.catchment(x=target_point[1], y=target_point[0], fdir=fdir, xytype="index")
+                sub_catchment_mask = grid.view(sub_catchment)
+                
+                # Mark the sub-catchment as a new subbasin
+                subbasins[sub_catchment_mask == 1] = basin_id
+                tmp_catchment_mask[sub_catchment_mask == 1] = 0  # Update mask
+                remaining_cells = int(np.sum(tmp_catchment_mask))  # Update remaining cells
+                            
+                # Add the target point to the list
+                current_cells = int(np.sum(sub_catchment_mask))  # Number of cells in the subbasin
+                target_points.append(
+                    [basin_id - 1, target_point[1], target_point[0], target_point[0] * subbasins.shape[1] + target_point[1], current_cells]
+                )
+                if remaining_cells < last_area: 
+                    max_acc = np.max(acc[(acc < target_size) & (tmp_catchment_mask > 0)])                                  
+                    points=find_upstream(acc*tmp_catchment_mask, fdir*tmp_catchment_mask,threshold=max_acc)
+                    points.append([row,col])
+                    for target_point in points:
+                        basin_id += 1
+                        sub_catchment = grid.catchment(x=target_point[1], y=target_point[0], fdir=fdir*tmp_catchment_mask, xytype='index')
+                        sub_catchment_mask = grid.view(sub_catchment)
+                                    
+                        subbasins[sub_catchment_mask == 1] = basin_id
+                        
+                        tmp_catchment_mask[sub_catchment_mask == 1] = 0
+                        
+                        target_points.append(
+                            [basin_id - 1, target_point[1], target_point[0], target_point[0] * colmax + target_point[1], int(np.sum(sub_catchment_mask))]
+                        )
+                                                                        
+                    break 
+                basin_id += 1
 
-                if makespan >= last_makespan:  # Stop if the makespan does not improve
-                    break
-                last_makespan = makespan
+            # Recalculate flow direction for the remaining catchment
+            fdir = grid.flowdir(inflated_dem)
+            # Simulate task execution to evaluate makespan and average utilization
+            target_points = build_dependencies(target_points, grid, fdir)
+            makespan, average_utilization = simulate_task_execution(num_processors, target_points)
                 
             opt_info.append([basin_id, makespan, average_utilization])
             # Update binary search range based on the result

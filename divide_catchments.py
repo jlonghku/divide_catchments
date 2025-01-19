@@ -284,7 +284,7 @@ def build_branch(fdir, threshold=None, plot=False):
 
     return branch
 
-def find_upstream(acc, fdir,threshold=None):
+def find_upstream(acc, fdir,threshold=None,return_value=False):
     
     d8_offsets = {
         1: (0, 1),      
@@ -330,7 +330,7 @@ def find_upstream(acc, fdir,threshold=None):
             if threshold <= 0:
                 return []
     else:
-        candidates = np.argwhere(acc > threshold)
+        candidates = np.argwhere(acc >= threshold)
         candidates_set = set(map(tuple, candidates)) 
         
         upstream_points = []
@@ -347,9 +347,10 @@ def find_upstream(acc, fdir,threshold=None):
                 upstream_points.extend(current_upstreams)
         upstream_points.sort()
         best_upstream_points = [item[1] for item in upstream_points]
+        best_criterion_value = upstream_points[0][0]
         
         
-    return best_upstream_points
+    return best_upstream_points if not return_value else best_criterion_value 
   
 def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method='layer', crs="EPSG:26910", is_plot=False):
     # Initialize the Grid object and add DEM data
@@ -378,17 +379,20 @@ def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method=
        
     if method == 'layer':
         opt_info = []
-        last_area_min = 0  # Minimum value for last_area
-        last_area_max = catchment_cells  # Maximum initial value for last_area 
+        start_size=np.sum(catchment_mask) // num_processors
+        target_size = int(0.8*start_size)
+        max_target_size=int(2*start_size)
+        size_step=int(0.05*target_size)
+        best_makespan=np.inf
+        best_target_points=[]
+        best_subbasins=[]
         # Binary search to optimize last_area
-        while last_area_max - last_area_min > 1:
-            last_area = (last_area_max + last_area_min) // 2  # Midpoint for binary search
-            average_utilization = 0                  
-            basin_id = 1
-            target_size = (np.sum(catchment_mask)-last_area) // num_processors
-
+        while target_size<max_target_size:       
+            basin_id = 1           
+            points=find_upstream(acc*catchment_mask, fdir*catchment_mask,threshold=target_size)
+            points.append([row,col])
+            
             tmp_catchment_mask = catchment_mask.copy()  # Copy of the current catchment mask
-            basin_id = 1
             subbasins = np.zeros_like(acc, dtype=int)  # Array to store subbasin IDs
             target_points = []  # List to store target points
             remaining_cells = int(np.sum(tmp_catchment_mask))  # Remaining unprocessed cells
@@ -396,6 +400,7 @@ def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method=
             while remaining_cells > 0:
                 # Find the point with accumulation closest to the target size within the remaining catchment
                 acc_masked = acc * tmp_catchment_mask
+                
                 target_point = np.unravel_index(
                     np.argmax(np.where(acc_masked < target_size, acc_masked, -np.inf)), acc_masked.shape
                 )
@@ -412,12 +417,10 @@ def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method=
                 # Add the target point to the list
                 current_cells = int(np.sum(sub_catchment_mask))  # Number of cells in the subbasin
                 target_points.append(
-                    [basin_id - 1, target_point[1], target_point[0], target_point[0] * subbasins.shape[1] + target_point[1], current_cells]
-                )
-                if remaining_cells < last_area: 
-                    max_acc = np.max(acc[(acc < target_size) & (tmp_catchment_mask > 0)])                                  
-                    points=find_upstream(acc*tmp_catchment_mask, fdir*tmp_catchment_mask,threshold=max_acc)
-                    points.append([row,col])
+                    [basin_id - 1, target_point[1], target_point[0], target_point[0] * subbasins.shape[1] + target_point[1], current_cells])
+                
+                if basin_id == num_subbasins-len(points):                                 
+                    
                     for target_point in points:
                         basin_id += 1
                         sub_catchment = grid.catchment(x=target_point[1], y=target_point[0], fdir=fdir*tmp_catchment_mask, xytype='index')
@@ -430,27 +433,29 @@ def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method=
                         target_points.append(
                             [basin_id - 1, target_point[1], target_point[0], target_point[0] * colmax + target_point[1], int(np.sum(sub_catchment_mask))]
                         )
-                                                                        
-                    break 
+                    break                                                  
                 basin_id += 1
 
             # Recalculate flow direction for the remaining catchment
             fdir = grid.flowdir(inflated_dem)
             # Simulate task execution to evaluate makespan and average utilization
             target_points = build_dependencies(target_points, grid, fdir)
+            print(f'Target size: {target_size}')
             makespan, average_utilization = simulate_task_execution(num_processors, target_points)
                 
-            opt_info.append([basin_id, makespan, average_utilization])
+            #opt_info.append([basin_id, makespan, average_utilization])
             # Update binary search range based on the result
-            if basin_id < num_subbasins:
-                last_area_max = last_area   
-            elif basin_id == num_subbasins:
-                break
-            else:
-                last_area_min = last_area  
+            if makespan <= best_makespan:
+                best_makespan=makespan  
+                best_target_points=target_points
+                best_subbasins=subbasins 
+            
+            target_size+=size_step
+        target_points=best_target_points  
+        subbasins=best_subbasins  
 
         # Visualize the utilization of different configurations
-        plot_utilization(opt_info)
+        #plot_utilization(opt_info)
         
     if method == 'branch1':
         acc=build_branch(fdir*catchment_mask)

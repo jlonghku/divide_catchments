@@ -352,7 +352,7 @@ def find_upstream(acc, fdir,threshold=None,return_value=False):
         
     return best_upstream_points if not return_value else best_criterion_value 
   
-def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method='layer', crs="EPSG:26910", is_plot=False):
+def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method='layer', crs="EPSG:26910", is_plot=False,target_size=None):
     # Initialize the Grid object and add DEM data
     grid = Grid.from_ascii(asc_file, crs=Proj(crs))
     dem = grid.read_ascii(asc_file, crs=Proj(crs))
@@ -379,15 +379,15 @@ def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method=
        
     if method == 'layer':
         opt_info = []
-        start_size=np.sum(catchment_mask) // num_processors
-        target_size = int(0.8*start_size)
-        max_target_size=int(2*start_size)
+        start_size=np.sum(catchment_mask) // num_processors 
+        max_target_size=int(1.5*start_size) if target_size is None else target_size
+        target_size = int(0.8*start_size) if target_size is None else target_size
         size_step=int(0.05*target_size)
         best_makespan=np.inf
         best_target_points=[]
         best_subbasins=[]
         # Binary search to optimize last_area
-        while target_size<max_target_size:       
+        while target_size<=max_target_size:       
             basin_id = 1           
             points=find_upstream(acc*catchment_mask, fdir*catchment_mask,threshold=target_size)
             points.append([row,col])

@@ -284,7 +284,7 @@ def build_branch(fdir, threshold=None, plot=False):
 
     return branch
 
-def find_upstream(acc, fdir,threshold=None,return_value=False):
+def find_upstream(acc, fdir,threshold=None,return_value=False,return_main=False,tmp_acc=None):
     
     d8_offsets = {
         1: (0, 1),      
@@ -334,24 +334,49 @@ def find_upstream(acc, fdir,threshold=None,return_value=False):
         candidates_set = set(map(tuple, candidates)) 
         
         upstream_points = []
+       
         
         for r, c in candidates: 
             current_upstreams = []        
             for direction, (dr, dc) in d8_offsets.items():
                 nr, nc = r - dr, c - dc   
                 if (nr, nc) in candidates_set and fdir[nr, nc] == direction:
-                    current_upstreams.append((acc[nr, nc], [nr, nc]))
-                    
-                    
-            if len(current_upstreams) > 1:
-                upstream_points.extend(current_upstreams)
+                    acc_value=acc[nr, nc] if not return_main else tmp_acc[nr,nc] 
+                    current_upstreams.append((acc_value, [nr, nc])) 
+            if return_main: 
+                if len(current_upstreams) >= 1:   
+                    current_upstreams.sort(reverse=True)
+                    upstream_points.append(current_upstreams[0]) 
+            else:       
+                if len(current_upstreams) > 1:
+                    upstream_points.extend(current_upstreams)
         upstream_points.sort()
         best_upstream_points = [item[1] for item in upstream_points]
-        best_criterion_value = upstream_points[0][0]
+        best_criterion_value = upstream_points[0][0] 
         
         
     return best_upstream_points if not return_value else best_criterion_value 
-  
+
+def find_downstream(fdir,target_points,main_stream_points):
+    d8_offsets = {
+        1: (0, 1),      
+        2: (1, 1),      
+        4: (1, 0),      
+        8: (1, -1),     
+        16: (0, -1),    
+        32: (-1, -1),  
+        64: (-1, 0),   
+        128: (-1, 1)    
+    }
+    r,c=target_points
+    dr,dc=d8_offsets[fdir[r,c]]
+    nr=r+dr
+    nc=c+dc
+   
+    return True if [nr,nc] in main_stream_points else False
+        
+    
+    
 def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method='layer', crs="EPSG:26910", is_plot=False,target_size=None):
     # Initialize the Grid object and add DEM data
     grid = Grid.from_ascii(asc_file, crs=Proj(crs))
@@ -404,6 +429,18 @@ def divide_catchments(asc_file, col, row, num_processors, num_subbasins, method=
                 target_point = np.unravel_index(
                     np.argmax(np.where(acc_masked < target_size, acc_masked, -np.inf)), acc_masked.shape
                 )
+                tmp_acc=grid.accumulation(fdir*tmp_catchment_mask)
+                main_stream_points=find_upstream(acc_masked,fdir*tmp_catchment_mask,threshold=target_size,return_main=True,tmp_acc=tmp_acc)
+                tmp_tmp_catchment_mask=tmp_catchment_mask.copy()
+                while not find_downstream(fdir,target_point,main_stream_points):
+                    tmp_catchment=grid.catchment(x=target_point[1], y=target_point[0], fdir=fdir, xytype="index")
+                    tmp_mask=grid.view(tmp_catchment)
+                    tmp_tmp_catchment_mask[tmp_mask==1]=0
+                    tmp_acc_masked=acc*tmp_tmp_catchment_mask
+                    target_point = np.unravel_index(
+                    np.argmax(np.where(tmp_acc_masked < target_size, tmp_acc_masked, -np.inf)), tmp_acc_masked.shape
+                )
+                    
                 
                 # Extract the catchment (all upstream cells of the selected point)
                 sub_catchment = grid.catchment(x=target_point[1], y=target_point[0], fdir=fdir, xytype="index")
